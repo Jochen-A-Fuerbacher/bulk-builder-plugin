@@ -37,7 +37,7 @@ public class BuildHistory extends Plugin {
     /**
      * Size of the history to maintain
      */
-    public static final Integer SIZE = 10;
+    public static final int SIZE = 10;
 
     /**
      * History list

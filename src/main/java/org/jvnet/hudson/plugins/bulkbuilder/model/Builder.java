@@ -24,19 +24,23 @@
 
 package org.jvnet.hudson.plugins.bulkbuilder.model;
 
+import hudson.Plugin;
 import hudson.Util;
 import hudson.model.ParameterValue;
 import hudson.model.Result;
+import hudson.model.Run;
 import hudson.model.TopLevelItem;
-import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.Cause;
 import hudson.model.Hudson;
+import hudson.model.Job;
 import hudson.model.ParameterDefinition;
 import hudson.model.ParametersAction;
 import hudson.model.ParametersDefinitionProperty;
 import hudson.model.StringParameterDefinition;
 import hudson.model.View;
+import jenkins.model.Jenkins;
+import org.jenkinsci.plugins.workflow.job.WorkflowJob;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -91,14 +95,14 @@ public class Builder {
         int i = 0;
 
         // Build composite predicate of all build prefs
-        Predicate<AbstractProject<?, ?>> compositePredicate = Predicates.and(filters);
+        Predicate<Job<?, ?>> compositePredicate = Predicates.and(filters);
 
-        List<AbstractProject<?, ?>> projects = getProjects(this.view);
+        List<Job<?, ?>> projects = getProjects(this.view);
 
         // Use composite predicate to identify target projects
-        Iterable<AbstractProject<?, ?>> targetProjects = Iterables.filter(projects, compositePredicate);
+        Iterable<Job<?, ?>> targetProjects = Iterables.filter(projects, compositePredicate);
 
-        for (AbstractProject<?, ?> project : targetProjects) {
+        for (Job<?, ?> project : targetProjects) {
             LOGGER.log(Level.FINE, "Scheduling build for job '" + project.getDisplayName() + "'");
             performBuildProject(project);
             i++;
@@ -110,12 +114,12 @@ public class Builder {
     private int buildWorseOrEqualsTo(final Result r) {
         LOGGER.log(Level.FINE, "Starting to build " + r.toString() + " jobs.");
 
-        ArrayList<Predicate<AbstractProject<?, ?>>> filters = new ArrayList<Predicate<AbstractProject<?, ?>>>();
+        ArrayList<Predicate<Job<?, ?>>> filters = new ArrayList<Predicate<Job<?, ?>>>();
 
-        filters.add(new Predicate<AbstractProject<?, ?>>() {
+        filters.add(new Predicate<Job<?, ?>>() {
             @Override
-	    public boolean apply(AbstractProject<?, ?> project) {
-                AbstractBuild<?, ?> build = project.getLastCompletedBuild();
+	    public boolean apply(Job<?, ?> project) {
+                Run<?, ?> build = project.getLastCompletedBuild();
 		return build == null || build.getResult().isWorseOrEqualTo(r);
 	    }
 	});
@@ -132,12 +136,12 @@ public class Builder {
     private int buildExactStatus(final Result r) {
         LOGGER.log(Level.FINE, "Starting to build " + r.toString() + " jobs.");
 
-        ArrayList<Predicate<AbstractProject<?, ?>>> filters = new ArrayList<Predicate<AbstractProject<?, ?>>>();
+        ArrayList<Predicate<Job<?, ?>>> filters = new ArrayList<Predicate<Job<?, ?>>>();
 
-        filters.add(new Predicate<AbstractProject<?, ?>>() {
+        filters.add(new Predicate<Job<?, ?>>() {
             @Override
-	    public boolean apply(AbstractProject<?, ?> project) {
-                AbstractBuild<?, ?> build = project.getLastCompletedBuild();
+	    public boolean apply(Job<?, ?> project) {
+                Run<?, ?> build = project.getLastCompletedBuild();
                 return build != null && build.getResult() == r;
 	    }
 	});
@@ -153,9 +157,9 @@ public class Builder {
 
     private ArrayList addSubFilters(ArrayList filters) {
         if (this.pattern != null) {
-            Predicate<AbstractProject<?, ?>> patternPred = new Predicate<AbstractProject<?, ?>>() {
+            Predicate<Job<?, ?>> patternPred = new Predicate<Job<?, ?>>() {
                 @Override
-                public boolean apply(AbstractProject<?, ?> project) {
+                public boolean apply(Job<?, ?> project) {
                     String patternReg = Builder.this.pattern.replaceAll("\\*", "\\.\\*");
                     return Pattern.matches(patternReg, project.getDisplayName());
                 }
@@ -236,9 +240,9 @@ public class Builder {
      *
      * @return
      */
-    protected final List<AbstractProject<?, ?>> getProjects(String viewName) {
+    protected final List<Job<?, ?>> getProjects(String viewName) {
 
-	List<AbstractProject<?, ?>> projects = new ArrayList<AbstractProject<?, ?>>();
+	List<Job<?, ?>> projects = new ArrayList<Job<?, ?>>();
         Collection<TopLevelItem> items = Hudson.getInstance().getItems();
 
         if (viewName != null) {
@@ -249,7 +253,7 @@ public class Builder {
             }
         }
 
-        for (AbstractProject<?, ?> project : Util.createSubList(items, AbstractProject.class)) {
+        for (Job<?, ?> project : Util.createSubList(items, Job.class)) {
             if (!project.isBuildable()) {
                 continue;
             }
@@ -265,62 +269,104 @@ public class Builder {
      * @param project
      * @return
      */
-    protected final void performBuildProject(AbstractProject<?, ?> project) {
-	if (!project.hasPermission(AbstractProject.BUILD)) {
+    protected final void performBuildProject(Job<?, ?> project) {
+	    if (!project.hasPermission(Job.BUILD)) {
             LOGGER.log(Level.WARNING, "Insufficient permissions to build " + project.getName());
-	    return;
-	}
+	        return;
+	    }
+	    
+	    boolean isWorkflowJobPluginAvailable = isWorkflowJobPluginAvailable();
+	    if(!(project instanceof AbstractProject) 
+	    		&& (isWorkflowJobPluginAvailable && !(project instanceof WorkflowJob)))
+	    	return; //No valid job type
+	    
+	    
+	    ParametersDefinitionProperty pp = (ParametersDefinitionProperty) project
+			    .getProperty(ParametersDefinitionProperty.class);
+	    
+	    boolean performed = false;
+	    if(project instanceof AbstractProject) {
+	    	performed = performBuildProject((AbstractProject<?, ?>)project, pp);
+	    }else if(isWorkflowJobPluginAvailable && (project instanceof WorkflowJob)) {
+	    	performed = performBuildProject((WorkflowJob)project, pp);
+	    }
+	    if(performed)
+	    	return;
 
-        if (action.equals(BuildAction.POLL_SCM)) {
+	    List<ParameterDefinition> parameterDefinitions = pp
+	    	    .getParameterDefinitions();
+	    List<ParameterValue> values = new ArrayList<ParameterValue>();
+
+	    for (ParameterDefinition paramDef : parameterDefinitions) {
+
+	        if (!(paramDef instanceof StringParameterDefinition)) {
+	            // TODO add support for other parameter types
+		        values.add(paramDef.getDefaultParameterValue());
+		        continue;
+	        }
+
+	        StringParameterDefinition stringParamDef = (StringParameterDefinition) paramDef;
+	        ParameterValue value;
+
+	        // Did user supply this parameter?
+	        if (param.containsKey(paramDef.getName())) {
+		    value = stringParamDef.createValue(param
+			    .get(stringParamDef.getName()));
+	        } else {
+		    // No, then use the default value
+		    value = stringParamDef.createValue(stringParamDef
+			    .getDefaultValue());
+	        }
+
+	        values.add(value);
+	    }
+
+	    Hudson.getInstance().getQueue()
+			.schedule(pp.getOwner(), 1, new ParametersAction(values));
+    }
+    
+    protected boolean performBuildProject(AbstractProject<?, ?> project, ParametersDefinitionProperty pp) {
+		if (action.equals(BuildAction.POLL_SCM)) {
             project.schedulePolling();
-            return;
+            return true;
         }
 
-	// no user parameters provided, just build it
-	if (param == null) {
-	    project.scheduleBuild(new Cause.UserCause());
-	    return;
-	}
-
-	ParametersDefinitionProperty pp = (ParametersDefinitionProperty) project
-		.getProperty(ParametersDefinitionProperty.class);
-
-	// project does not except any parameters, just build it
-	if (pp == null) {
-	    project.scheduleBuild(new Cause.UserCause());
-	    return;
-	}
-
-	List<ParameterDefinition> parameterDefinitions = pp
-		.getParameterDefinitions();
-	List<ParameterValue> values = new ArrayList<ParameterValue>();
-
-	for (ParameterDefinition paramDef : parameterDefinitions) {
-
-	    if (!(paramDef instanceof StringParameterDefinition)) {
-		// TODO add support for other parameter types
-		values.add(paramDef.getDefaultParameterValue());
-		continue;
+	    // no user parameters provided, just build it
+	    if (param == null) {
+	        project.scheduleBuild(new Cause.UserCause());
+	        return true;
 	    }
 
-	    StringParameterDefinition stringParamDef = (StringParameterDefinition) paramDef;
-	    ParameterValue value;
-
-	    // Did user supply this parameter?
-	    if (param.containsKey(paramDef.getName())) {
-		value = stringParamDef.createValue(param
-			.get(stringParamDef.getName()));
-	    } else {
-		// No, then use the default value
-		value = stringParamDef.createValue(stringParamDef
-			.getDefaultValue());
+	    // project does not except any parameters, just build it
+	    if (pp == null) {
+	        project.scheduleBuild(new Cause.UserCause());
+	        return true;
+	    }
+	    
+	    return false;
+	}
+    
+    protected boolean performBuildProject(WorkflowJob project, ParametersDefinitionProperty pp) {
+	    // no user parameters provided, just build it
+	    if (param == null) {
+	        project.scheduleBuild2(0);
+	        return true;
 	    }
 
-	    values.add(value);
+	    // project does not except any parameters, just build it
+	    if (pp == null) {
+	        project.scheduleBuild2(0);
+	        return true;
+	    }
+	    
+	    return false;
 	}
-
-	Hudson.getInstance().getQueue()
-		.schedule(pp.getOwner(), 1, new ParametersAction(values));
+    
+    private boolean isWorkflowJobPluginAvailable() {
+    	Plugin plugin = Jenkins.getInstance().getPlugin("workflow-job");
+    	if(plugin == null)
+    		return false;
+    	return true;
     }
 
 }

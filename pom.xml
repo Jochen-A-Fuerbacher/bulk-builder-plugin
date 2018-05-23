@@ -28,9 +28,9 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>org.jvnet.hudson.plugins</groupId>
+    <groupId>org.jenkins-ci.plugins</groupId>
     <artifactId>plugin</artifactId>
-    <version>1.388</version>
+    <version>1.580.1</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
@@ -77,6 +77,21 @@
       <email>jieryn@gmail.com</email>
     </developer>
   </developers>
+  
+  <dependencies>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-job</artifactId>
+      <version>1.0</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>com.github.stephenc.jcip</groupId>
+      <artifactId>jcip-annotations</artifactId>
+      <version>1.0-1</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
 
   <distributionManagement>
     <repository>
@@ -125,7 +140,7 @@
     <maven-resources-plugin.version>2.4.3</maven-resources-plugin.version>
     <maven-site-plugin.version>2.1.1</maven-site-plugin.version>
     <maven-source-plugin.version>2.1.2</maven-source-plugin.version>
-    <maven-surefire-plugin.version>2.7.2</maven-surefire-plugin.version>
+    <maven-surefire-plugin.version>2.18</maven-surefire-plugin.version>
     <maven-surefire-report-plugin.version>2.7.2</maven-surefire-report-plugin.version>
     <maven-war-plugin.version>2.1.1</maven-war-plugin.version>
     <apt-maven-plugin.version>1.0-alpha-4</apt-maven-plugin.version>
@@ -226,9 +241,9 @@
           <artifactId>maven-surefire-plugin</artifactId>
           <version>${maven-surefire-plugin.version}</version>
           <configuration>
-            <parallel>methods</parallel>
+            <forkCount>4</forkCount>
+            <reuseForks>false</reuseForks>
             <testFailureIgnore>true</testFailureIgnore>
-            <threadCount>4</threadCount>
           </configuration>
         </plugin>
       </plugins>
@@ -256,6 +271,15 @@
       <plugin>
         <artifactId>maven-site-plugin</artifactId>
         <version>${maven-site-plugin.version}</version>
+      </plugin>
+      <plugin>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${maven-surefire-plugin.version}</version>
+          <configuration>
+            <forkCount>4</forkCount>
+            <reuseForks>false</reuseForks>
+            <testFailureIgnore>true</testFailureIgnore>
+          </configuration>
       </plugin>
     </plugins>
   </build>
